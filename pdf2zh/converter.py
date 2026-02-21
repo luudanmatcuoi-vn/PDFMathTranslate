@@ -53,7 +53,7 @@ class PDFConverterEx(PDFConverter):
         PDFConverter.__init__(self, rsrcmgr, None, "utf-8", 1, None)
 
     def begin_page(self, page, ctm) -> None:
-        # 重载替换 cropbox
+        # Override replace cropbox
         (x0, y0, x1, y1) = page.cropbox
         (x0, y0) = apply_matrix_pt(ctm, (x0, y0))
         (x1, y1) = apply_matrix_pt(ctm, (x1, y1))
@@ -61,17 +61,17 @@ class PDFConverterEx(PDFConverter):
         self.cur_item = LTPage(page.pageno, mediabox)
 
     def end_page(self, page):
-        # 重载返回指令流
+        # Override return command stream
         return self.receive_layout(self.cur_item)
 
     def begin_figure(self, name, bbox, matrix) -> None:
-        # 重载设置 pageid
+        # Override set pageid
         self._stack.append(self.cur_item)
         self.cur_item = LTFigure(name, bbox, mult_matrix(matrix, self.ctm))
         self.cur_item.pageid = self._stack[-1].pageid
 
     def end_figure(self, _: str) -> None:
-        # 重载返回指令流
+        # Override return command stream
         fig = self.cur_item
         assert isinstance(self.cur_item, LTFigure), str(type(self.cur_item))
         self.cur_item = self._stack.pop()
@@ -89,7 +89,7 @@ class PDFConverterEx(PDFConverter):
         ncs,
         graphicstate: PDFGraphicState,
     ) -> float:
-        # 重载设置 cid 和 font
+        # Override set cid and font
         try:
             text = font.to_unichr(cid)
             assert isinstance(text, str), str(type(text))
@@ -110,28 +110,28 @@ class PDFConverterEx(PDFConverter):
             graphicstate,
         )
         self.cur_item.add(item)
-        item.cid = cid  # hack 插入原字符编码
-        item.font = font  # hack 插入原字符字体
+        item.cid = cid  # hack insert original character encoding
+        item.font = font  # hack insert original character font
         return item.adv
 
 
 class Paragraph:
     def __init__(self, y, x, x0, x1, y0, y1, size, brk):
-        self.y: float = y  # 初始纵坐标
-        self.x: float = x  # 初始横坐标
-        self.x0: float = x0  # 左边界
-        self.x1: float = x1  # 右边界
-        self.y0: float = y0  # 上边界
-        self.y1: float = y1  # 下边界
-        self.size: float = size  # 字体大小
-        self.brk: bool = brk  # 换行标记
+        self.y: float = y  # initial y coordinate
+        self.x: float = x  # initial x coordinate
+        self.x0: float = x0  # left boundary
+        self.x1: float = x1  # right boundary
+        self.y0: float = y0  # top boundary
+        self.y1: float = y1  # bottom boundary
+        self.size: float = size  # font size
+        self.brk: bool = brk  # line break marker
 
 
 # fmt: off
 class TranslateConverter(PDFConverterEx):
     def __init__(
         self,
-        rsrcmgr,
+        rsrcmgr: PDFResourceManager,
         vfont: str = None,
         vchar: str = None,
         thread: int = 0,
@@ -144,6 +144,9 @@ class TranslateConverter(PDFConverterEx):
         envs: Dict = None,
         prompt: Template = None,
         ignore_cache: bool = False,
+        force_font: bool = False,
+        force_font_size: int = 100,
+        bypass_parser: bool = False,
     ) -> None:
         super().__init__(rsrcmgr)
         self.vfont = vfont
@@ -152,6 +155,9 @@ class TranslateConverter(PDFConverterEx):
         self.layout = layout
         self.noto_name = noto_name
         self.noto = noto
+        self.force_font = force_font
+        self.force_font_size = force_font_size
+        self.bypass_parser = bypass_parser
         self.translator: BaseTranslator = None
         # e.g. "ollama:gemma2:9b" -> ["ollama", "gemma2:9b"]
         param = service.split(":", 1)
@@ -167,85 +173,88 @@ class TranslateConverter(PDFConverterEx):
             raise ValueError("Unsupported translation service")
 
     def receive_layout(self, ltpage: LTPage):
-        # 段落
-        sstk: list[str] = []            # 段落文字栈
-        pstk: list[Paragraph] = []      # 段落属性栈
-        vbkt: int = 0                   # 段落公式括号计数
-        # 公式组
-        vstk: list[LTChar] = []         # 公式符号组
-        vlstk: list[LTLine] = []        # 公式线条组
-        vfix: float = 0                 # 公式纵向偏移
-        # 公式组栈
-        var: list[list[LTChar]] = []    # 公式符号组栈
-        varl: list[list[LTLine]] = []   # 公式线条组栈
-        varf: list[float] = []          # 公式纵向偏移栈
-        vlen: list[float] = []          # 公式宽度栈
-        # 全局
-        lstk: list[LTLine] = []         # 全局线条栈
-        xt: LTChar = None               # 上一个字符
-        xt_cls: int = -1                # 上一个字符所属段落，保证无论第一个字符属于哪个类别都可以触发新段落
-        vmax: float = ltpage.width / 4  # 行内公式最大宽度
-        ops: str = ""                   # 渲染结果
+        # Paragraph
+        sstk: list[str] = []            # paragraph text stack
+        pstk: list[Paragraph] = []      # paragraph attribute stack
+        vbkt: int = 0                   # paragraph formula bracket count
+        # Formula group
+        vstk: list[LTChar] = []         # formula symbol group
+        vlstk: list[LTLine] = []        # formula line group
+        vfix: float = 0                 # formula vertical offset
+        # Formula group stack
+        var: list[list[LTChar]] = []    # formula symbol group stack
+        varl: list[list[LTLine]] = []   # formula line group stack
+        varf: list[float] = []          # formula vertical offset stack
+        vlen: list[float] = []          # formula width stack
+        # Global
+        lstk: list[LTLine] = []         # global line stack
+        xt: LTChar = None               # previous character
+        xt_cls: int = -1                # paragraph of previous character, ensures new paragraph can be triggered regardless of first character's category
+        vmax: float = ltpage.width / 4  # max width of inline formula
+        ops: str = ""                   # Render result
 
-        def vflag(font: str, char: str):    # 匹配公式（和角标）字体
-            if isinstance(font, bytes):     # 不一定能 decode，直接转 str
+        def vflag(font: str, char: str):    # Match formula (and subscript/superscript) font
+            if isinstance(font, bytes):     # May not be able to decode, convert to str directly
                 try:
-                    font = font.decode('utf-8')  # 尝试使用 UTF-8 解码
+                    font = font.decode('utf-8')  # Try to decode using UTF-8
                 except UnicodeDecodeError:
                     font = ""
-            font = font.split("+")[-1]      # 字体名截断
+            font = font.split("+")[-1]      # Font name truncation
             if re.match(r"\(cid:", char):
                 return True
-            # 基于字体名规则的判定
+            # Judgment based on font name rules
             if self.vfont:
                 if re.match(self.vfont, font):
                     return True
             else:
-                if re.match(                                            # latex 字体
+                if re.match(                                            # latex font
                     r"(CM[^R]|MS.M|XY|MT|BL|RM|EU|LA|RS|LINE|LCIRCLE|TeX-|rsfs|txsy|wasy|stmary|.*Mono|.*Code|.*Ital|.*Sym|.*Math)",
                     font,
                 ):
                     return True
-            # 基于字符集规则的判定
+            # Judgment based on character set rules
             if self.vchar:
                 if re.match(self.vchar, char):
                     return True
             else:
                 if (
                     char
-                    and char != " "                                     # 非空格
+                    and char != " "                                     # non-space
                     and (
                         unicodedata.category(char[0])
-                        in ["Lm", "Mn", "Sk", "Sm", "Zl", "Zp", "Zs"]   # 文字修饰符、数学符号、分隔符号
-                        or ord(char[0]) in range(0x370, 0x400)          # 希腊字母
+                        in ["Lm", "Mn", "Sk", "Sm", "Zl", "Zp", "Zs"]   # Text modifiers, math symbols, separators
+                        or ord(char[0]) in range(0x370, 0x400)          # Greek letters
                     )
                 ):
                     return True
             return False
 
         ############################################################
-        # A. 原文档解析
+        # A. Original document parsing
         for child in ltpage:
             if isinstance(child, LTChar):
                 cur_v = False
                 layout = self.layout[ltpage.pageid]
-                # ltpage.height 可能是 fig 里面的高度，这里统一用 layout.shape
+                # ltpage.height might be height in fig, use layout.shape uniformly here
                 h, w = layout.shape
-                # 读取当前字符在 layout 中的类别
+                # Read category of current character in layout
                 cx, cy = np.clip(int(child.x0), 0, w - 1), np.clip(int(child.y0), 0, h - 1)
                 cls = layout[cy, cx]
-                # 锚定文档中 bullet 的位置
+                # Anchor bullet position in document
                 if child.get_text() == "•":
                     cls = 0
-                # 判定当前字符是否属于公式
-                if (                                                                                        # 判定当前字符是否属于公式
-                    cls == 0                                                                                # 1. 类别为保留区域
-                    or (cls == xt_cls and len(sstk[-1].strip()) > 1 and child.size < pstk[-1].size * 0.79)  # 2. 角标字体，有 0.76 的角标和 0.799 的大写，这里用 0.79 取中，同时考虑首字母放大的情况
-                    or vflag(child.fontname, child.get_text())                                              # 3. 公式字体
-                    or (child.matrix[0] == 0 and child.matrix[3] == 0)                                      # 4. 垂直字体
-                ):
+                # Determine if current character belongs to formula
+                is_formula_char = (                                                                         # Determine if current character belongs to formula
+                    cls == 0                                                                                # 1. Category is reserved area
+                    or (cls == xt_cls and len(sstk[-1].strip()) > 1 and child.size < pstk[-1].size * 0.79)  # 2. Subscript/superscript font, 0.76 for subscript and 0.799 for uppercase, use 0.79 as midpoint, also consider drop caps
+                    or vflag(child.fontname, child.get_text())                                              # 3. Formula font
+                    or (child.matrix[0] == 0 and child.matrix[3] == 0)                                      # 4. Vertical font
+                )
+                if is_formula_char:
                     cur_v = True
-                # 判定括号组是否属于公式
+                if self.bypass_parser and is_formula_char:
+                    cur_v = False
+                # Determine if bracket group belongs to formula
                 if not cur_v:
                     if vstk and child.get_text() == "(":
                         cur_v = True
@@ -253,24 +262,24 @@ class TranslateConverter(PDFConverterEx):
                     if vbkt and child.get_text() == ")":
                         cur_v = True
                         vbkt -= 1
-                if (                                                        # 判定当前公式是否结束
-                    not cur_v                                               # 1. 当前字符不属于公式
-                    or cls != xt_cls                                        # 2. 当前字符与前一个字符不属于同一段落
-                    # or (abs(child.x0 - xt.x0) > vmax and cls != 0)        # 3. 段落内换行，可能是一长串斜体的段落，也可能是段内分式换行，这里设个阈值进行区分
-                    # 禁止纯公式（代码）段落换行，直到文字开始再重开文字段落，保证只存在两种情况
-                    # A. 纯公式（代码）段落（锚定绝对位置）sstk[-1]=="" -> sstk[-1]=="{v*}"
-                    # B. 文字开头段落（排版相对位置）sstk[-1]!=""
-                    or (sstk[-1] != "" and abs(child.x0 - xt.x0) > vmax)    # 因为 cls==xt_cls==0 一定有 sstk[-1]==""，所以这里不需要再判定 cls!=0
+                if (                                                        # Determine if current formula ends
+                    not cur_v                                               # 1. Current character does not belong to formula
+                    or cls != xt_cls                                        # 2. Current character does not belong to same paragraph as previous one
+                    # or (abs(child.x0 - xt.x0) > vmax and cls != 0)        # 3. Line break within paragraph, could be a long italic paragraph or fraction break, set threshold to distinguish
+                    # Prohibit line break in pure formula (code) paragraph, until text starts and restarts text paragraph, ensure only two cases exist
+                    # A. Pure formula (code) paragraph (anchor absolute position) sstk[-1]=="" -> sstk[-1]=="{v*}"
+                    # B. Text starting paragraph (typesetting relative position) sstk[-1]!=""
+                    or (sstk[-1] != "" and abs(child.x0 - xt.x0) > vmax)    # Because cls==xt_cls==0 implies sstk[-1]=="", so no need to check cls!=0 here
                 ):
                     if vstk:
-                        if (                                                # 根据公式右侧的文字修正公式的纵向偏移
-                            not cur_v                                       # 1. 当前字符不属于公式
-                            and cls == xt_cls                               # 2. 当前字符与前一个字符属于同一段落
-                            and child.x0 > max([vch.x0 for vch in vstk])    # 3. 当前字符在公式右侧
+                        if (                                                # Correct formula vertical offset based on text to the right of formula
+                            not cur_v                                       # 1. Current character does not belong to formula
+                            and cls == xt_cls                               # 2. Current character belongs to same paragraph as previous one
+                            and child.x0 > max([vch.x0 for vch in vstk])    # 3. Current character is to the right of formula
                         ):
                             vfix = vstk[0].y0 - child.y0
                         if sstk[-1] == "":
-                            xt_cls = -1 # 禁止纯公式段落（sstk[-1]=="{v*}"）的后续连接，但是要考虑新字符和后续字符的连接，所以这里修改的是上个字符的类别
+                            xt_cls = -1 # Prohibit subsequent connection of pure formula paragraph (sstk[-1]=="{v*}"), but consider connection of new character and subsequent characters, so modify category of previous character here
                         sstk[-1] += f"{{v{len(var)}}}"
                         var.append(vstk)
                         varl.append(vlstk)
@@ -278,77 +287,90 @@ class TranslateConverter(PDFConverterEx):
                         vstk = []
                         vlstk = []
                         vfix = 0
-                # 当前字符不属于公式或当前字符是公式的第一个字符
+                # Current character does not belong to formula or is the first character of formula
                 if not vstk:
-                    if cls == xt_cls:               # 当前字符与前一个字符属于同一段落
-                        if child.x0 > xt.x1 + 1:    # 添加行内空格
-                            sstk[-1] += " "
-                        elif child.x1 < xt.x0:      # 添加换行空格并标记原文段落存在换行
-                            sstk[-1] += " "
-                            pstk[-1].brk = True
-                    else:                           # 根据当前字符构建一个新的段落
+                    if child.get_text() in ["+", "-"]:
+                        sstk[-1] += "\n"
+                        pstk[-1].brk = True
+                    elif cls == xt_cls:               # Current character belongs to same paragraph as previous one
+                        if child.x0 > xt.x1 + 1:    # Add inline space
+                            if child.get_text() in [" "]:
+                                pass
+                            else:
+                                sstk[-1] += " "
+                        elif child.x1 < xt.x0:      # Add line break space and mark original paragraph has line break
+                            if self.bypass_parser and is_formula_char:
+                                sstk.append("")
+                                pstk.append(Paragraph(child.y0, child.x0, child.x0, child.x0, child.y0, child.y1, child.size, False))
+                            else:
+                                sstk[-1] += "\n"
+                                pstk[-1].brk = True
+                    else:                           # Build a new paragraph based on current character
                         sstk.append("")
                         pstk.append(Paragraph(child.y0, child.x0, child.x0, child.x0, child.y0, child.y1, child.size, False))
-                if not cur_v:                                               # 文字入栈
-                    if (                                                    # 根据当前字符修正段落属性
-                        child.size > pstk[-1].size                          # 1. 当前字符比段落字体大
-                        or len(sstk[-1].strip()) == 1                       # 2. 当前字符为段落第二个文字（考虑首字母放大的情况）
-                    ) and child.get_text() != " ":                          # 3. 当前字符不是空格
-                        pstk[-1].y -= child.size - pstk[-1].size            # 修正段落初始纵坐标，假设两个不同大小字符的上边界对齐
+                if not cur_v:                                               # Push text to stack
+                    if (                                                    # Correct paragraph attributes based on current character
+                        child.size > pstk[-1].size                          # 1. Current character is larger than paragraph font
+                        or len(sstk[-1].strip()) == 1                       # 2. Current character is the second character of paragraph (consider drop caps)
+                    ) and child.get_text() != " ":                          # 3. Current character is not space
+                        pstk[-1].y -= child.size - pstk[-1].size            # Correct paragraph initial y coordinate, assuming top boundaries of two different sized characters align
                         pstk[-1].size = child.size
                     sstk[-1] += child.get_text()
-                else:                                                       # 公式入栈
-                    if (                                                    # 根据公式左侧的文字修正公式的纵向偏移
-                        not vstk                                            # 1. 当前字符是公式的第一个字符
-                        and cls == xt_cls                                   # 2. 当前字符与前一个字符属于同一段落
-                        and child.x0 > xt.x0                                # 3. 前一个字符在公式左侧
+                else:                                                       # Push formula to stack
+                    if (                                                    # Correct formula vertical offset based on text to the left of formula
+                        not vstk                                            # 1. Current character is the first character of formula
+                        and cls == xt_cls                                   # 2. Current character belongs to same paragraph as previous one
+                        and child.x0 > xt.x0                                # 3. Previous character is to the left of formula
                     ):
                         vfix = child.y0 - xt.y0
                     vstk.append(child)
-                # 更新段落边界，因为段落内换行之后可能是公式开头，所以要在外边处理
+                # Update paragraph boundaries, because line break within paragraph might be followed by formula start, so handle outside
                 pstk[-1].x0 = min(pstk[-1].x0, child.x0)
                 pstk[-1].x1 = max(pstk[-1].x1, child.x1)
                 pstk[-1].y0 = min(pstk[-1].y0, child.y0)
                 pstk[-1].y1 = max(pstk[-1].y1, child.y1)
-                # 更新上一个字符
+                # Update previous character
                 xt = child
                 xt_cls = cls
-            elif isinstance(child, LTFigure):   # 图表
+            elif isinstance(child, LTFigure):   # Chart/Figure
                 pass
-            elif isinstance(child, LTLine):     # 线条
+            elif isinstance(child, LTLine):     # Line
                 layout = self.layout[ltpage.pageid]
-                # ltpage.height 可能是 fig 里面的高度，这里统一用 layout.shape
+                # ltpage.height might be height in fig, use layout.shape uniformly here
                 h, w = layout.shape
-                # 读取当前线条在 layout 中的类别
+                # Read category of current line in layout
                 cx, cy = np.clip(int(child.x0), 0, w - 1), np.clip(int(child.y0), 0, h - 1)
                 cls = layout[cy, cx]
-                if vstk and cls == xt_cls:      # 公式线条
+                if vstk and cls == xt_cls:      # Formula line
                     vlstk.append(child)
-                else:                           # 全局线条
+                else:                           # Global line
                     lstk.append(child)
             else:
                 pass
-        # 处理结尾
-        if vstk:    # 公式出栈
+        # Handle end
+        if vstk:    # Pop formula
             sstk[-1] += f"{{v{len(var)}}}"
             var.append(vstk)
             varl.append(vlstk)
             varf.append(vfix)
         log.debug("\n==========[VSTACK]==========\n")
-        for id, v in enumerate(var):  # 计算公式宽度
+        for id, v in enumerate(var):  # Calculate formula width
             l = max([vch.x1 for vch in v]) - v[0].x0
             log.debug(f'< {l:.1f} {v[0].x0:.1f} {v[0].y0:.1f} {v[0].cid} {v[0].fontname} {len(varl[id])} > v{id} = {"".join([ch.get_text() for ch in v])}')
             vlen.append(l)
 
         ############################################################
-        # B. 段落翻译
+        # B. Paragraph translation
         log.debug("\n==========[SSTACK]==========\n")
 
         @retry(wait=wait_fixed(1))
-        def worker(s: str):  # 多线程翻译
-            if not s.strip() or re.match(r"^\{v\d+\}$", s):  # 空白和公式不翻译
+        def worker(s: str):  # Multi-threaded translation
+            if not s.strip() or re.match(r"^\{v\d+\}$", s):  # Do not translate whitespace and formulas
                 return s
             try:
+                # Replace line breaks with spaces to prevent word concatenation
+                # Line breaks in the source are visual PDF line wraps, not semantic breaks
+                s = s.replace("\n", " ")
                 new = self.translator.translate(s)
                 return new
             except BaseException as e:
@@ -363,23 +385,33 @@ class TranslateConverter(PDFConverterEx):
             news = list(executor.map(worker, sstk))
 
         ############################################################
-        # C. 新文档排版
-        def raw_string(fcur: str, cstk: str):  # 编码字符串
+        # C. New document typesetting
+        def raw_string(fcur: str, cstk: str):  # Encode string
             if fcur == self.noto_name:
                 return "".join(["%04x" % self.noto.has_glyph(ord(c)) for c in cstk])
-            elif isinstance(self.fontmap[fcur], PDFCIDFont):  # 判断编码长度
+            elif isinstance(self.fontmap[fcur], PDFCIDFont):  # Determine encoding length
                 return "".join(["%04x" % ord(c) for c in cstk])
             else:
                 return "".join(["%02x" % ord(c) for c in cstk])
 
-        # 根据目标语言获取默认行距
+        # Get default line height based on target language
         LANG_LINEHEIGHT_MAP = {
             "zh-cn": 1.4, "zh-tw": 1.4, "zh-hans": 1.4, "zh-hant": 1.4, "zh": 1.4,
             "ja": 1.1, "ko": 1.2, "en": 1.2, "ar": 1.0, "ru": 0.8, "uk": 0.8, "ta": 0.8
         }
-        default_line_height = LANG_LINEHEIGHT_MAP.get(self.translator.lang_out.lower(), 1.1) # 小语种默认1.1
+        default_line_height = LANG_LINEHEIGHT_MAP.get(self.translator.lang_out.lower(), 1.1) # Default 1.1 for minor languages
+        # Languages that use space-based word wrapping (not character-based like CJK)
+        SPACE_WRAP_LANGS = {"vi", "en", "fr", "de", "es", "pt", "it", "ru", "uk", "pl", "nl", "sv", "da", "no", "fi", "cs", "sk", "hu", "ro", "bg", "hr", "sl", "lt", "lv", "et", "tr", "id", "ms", "tl", "sw"}
+        space_wrap = self.translator.lang_out.lower() in SPACE_WRAP_LANGS
         _x, _y = 0, 0
         ops_list = []
+
+        def calc_char_width(ch, font_name):
+            """Calculate the advance width of a single character given its font."""
+            if font_name == self.noto_name:
+                return self.noto.char_lengths(ch, size)[0]
+            else:
+                return self.fontmap[font_name].char_width(ord(ch)) * size
 
         def gen_op_txt(font, size, x, y, rtxt):
             return f"/{font} {size:f} Tf 1 0 0 1 {x:f} {y:f} Tm [<{rtxt}>] TJ "
@@ -388,16 +420,16 @@ class TranslateConverter(PDFConverterEx):
             return f"ET q 1 0 0 1 {x:f} {y:f} cm [] 0 d 0 J {linewidth:f} w 0 0 m {xlen:f} {ylen:f} l S Q BT "
 
         for id, new in enumerate(news):
-            x: float = pstk[id].x                       # 段落初始横坐标
-            y: float = pstk[id].y                       # 段落初始纵坐标
-            x0: float = pstk[id].x0                     # 段落左边界
-            x1: float = pstk[id].x1                     # 段落右边界
-            height: float = pstk[id].y1 - pstk[id].y0   # 段落高度
-            size: float = pstk[id].size                 # 段落字体大小
-            brk: bool = pstk[id].brk                    # 段落换行标记
-            cstk: str = ""                              # 当前文字栈
-            fcur: str = None                            # 当前字体 ID
-            lidx = 0                                    # 记录换行次数
+            x: float = pstk[id].x                       # Paragraph initial x coordinate
+            y: float = pstk[id].y                       # Paragraph initial y coordinate
+            x0: float = pstk[id].x0                     # Paragraph left boundary
+            x1: float = pstk[id].x1                     # Paragraph right boundary
+            height: float = pstk[id].y1 - pstk[id].y0   # Paragraph height
+            size: float = pstk[id].size * (self.force_font_size / 100.0) # Paragraph font size
+            brk: bool = pstk[id].brk                    # Paragraph line break marker
+            cstk: str = ""                              # Current text stack
+            fcur: str = None                            # Current font ID
+            lidx = 0                                    # Record line break count
             tx = x
             fcur_ = fcur
             ptr = 0
@@ -408,56 +440,97 @@ class TranslateConverter(PDFConverterEx):
             while ptr < len(new):
                 vy_regex = re.match(
                     r"\{\s*v([\d\s]+)\}", new[ptr:], re.IGNORECASE
-                )  # 匹配 {vn} 公式标记
-                mod = 0  # 文字修饰符
-                if vy_regex:  # 加载公式
+                )  # Match {vn} formula marker
+                mod = 0  # Text modifier
+                if vy_regex:  # Load formula
                     ptr += len(vy_regex.group(0))
                     try:
                         vid = int(vy_regex.group(1).replace(" ", ""))
                         adv = vlen[vid]
                     except Exception:
-                        continue  # 翻译器可能会自动补个越界的公式标记
-                    if var[vid][-1].get_text() and unicodedata.category(var[vid][-1].get_text()[0]) in ["Lm", "Mn", "Sk"]:  # 文字修饰符
+                        continue  # Translator might automatically add an out-of-bounds formula marker
+                    if var[vid][-1].get_text() and unicodedata.category(var[vid][-1].get_text()[0]) in ["Lm", "Mn", "Sk"]:  # Text modifier
                         mod = var[vid][-1].width
-                else:  # 加载文字
+                else:  # Load text
                     ch = new[ptr]
                     fcur_ = None
                     try:
-                        if fcur_ is None and self.fontmap["tiro"].to_unichr(ord(ch)) == ch:
-                            fcur_ = "tiro"  # 默认拉丁字体
+                        if (
+                            not self.force_font
+                            and fcur_ is None
+                            and self.fontmap["tiro"].to_unichr(ord(ch)) == ch
+                        ):
+                            fcur_ = "tiro"  # Default Latin font
                     except Exception:
                         pass
                     if fcur_ is None:
-                        fcur_ = self.noto_name  # 默认非拉丁字体
+                        fcur_ = self.noto_name  # Default non-Latin font
                     if fcur_ == self.noto_name: # FIXME: change to CONST
                         adv = self.noto.char_lengths(ch, size)[0]
                     else:
                         adv = self.fontmap[fcur_].char_width(ord(ch)) * size
                     ptr += 1
-                if (                                # 输出文字缓冲区
-                    fcur_ != fcur                   # 1. 字体更新
-                    or vy_regex                     # 2. 插入公式
-                    or x + adv > x1 + 0.1 * size    # 3. 到达右边界（可能一整行都被符号化，这里需要考虑浮点误差）
+                if (                                # Output text buffer
+                    fcur_ != fcur                   # 1. Font update
+                    or vy_regex                     # 2. Insert formula
+                    or x + adv > x1 + 0.1 * size    # 3. Reach right boundary (possible that entire line is symbolized, need to consider floating point error involved)
                 ):
                     if cstk:
-                        ops_vals.append({
-                            "type": OpType.TEXT,
-                            "font": fcur,
-                            "size": size,
-                            "x": tx,
-                            "dy": 0,
-                            "rtxt": raw_string(fcur, cstk),
-                            "lidx": lidx
-                        })
-                        cstk = ""
-                if brk and x + adv > x1 + 0.1 * size:  # 到达右边界且原文段落存在换行
+                        # Word wrapping: if overflow and space_wrap, split at last space
+                        if space_wrap and not vy_regex and fcur_ == fcur and x + adv > x1 + 0.1 * size:
+                            space_idx = cstk.rfind(" ")
+                            if space_idx > 0:
+                                # Flush prefix (up to and including the space)
+                                prefix = cstk[:space_idx]
+                                suffix = cstk[space_idx + 1:]  # After the space
+                                ops_vals.append({
+                                    "type": OpType.TEXT,
+                                    "font": fcur,
+                                    "size": size,
+                                    "x": tx,
+                                    "dy": 0,
+                                    "rtxt": raw_string(fcur, prefix),
+                                    "lidx": lidx
+                                })
+                                # Move to next line
+                                lidx += 1
+                                x = x0
+                                tx = x0
+                                # Recalculate x for suffix
+                                for sc in suffix:
+                                    x += calc_char_width(sc, fcur)
+                                cstk = suffix
+                            else:
+                                # No space found, flush entire buffer as-is
+                                ops_vals.append({
+                                    "type": OpType.TEXT,
+                                    "font": fcur,
+                                    "size": size,
+                                    "x": tx,
+                                    "dy": 0,
+                                    "rtxt": raw_string(fcur, cstk),
+                                    "lidx": lidx
+                                })
+                                cstk = ""
+                        else:
+                            ops_vals.append({
+                                "type": OpType.TEXT,
+                                "font": fcur,
+                                "size": size,
+                                "x": tx,
+                                "dy": 0,
+                                "rtxt": raw_string(fcur, cstk),
+                                "lidx": lidx
+                            })
+                            cstk = ""
+                if x + adv > x1 + 0.1 * size:  # Reach right boundary, wrap to next line
                     x = x0
                     lidx += 1
-                if vy_regex:  # 插入公式
+                if vy_regex:  # Insert formula
                     fix = 0
-                    if fcur is not None:  # 段落内公式修正纵向偏移
+                    if fcur is not None:  # Correct vertical offset for formula within paragraph
                         fix = varf[vid]
-                    for vch in var[vid]:  # 排版公式字符
+                    for vch in var[vid]:  # Typeset formula character
                         vc = chr(vch.cid)
                         ops_vals.append({
                             "type": OpType.TEXT,
@@ -471,8 +544,8 @@ class TranslateConverter(PDFConverterEx):
                         if log.isEnabledFor(logging.DEBUG):
                             lstk.append(LTLine(0.1, (_x, _y), (x + vch.x0 - var[vid][0].x0, fix + y + vch.y0 - var[vid][0].y0)))
                             _x, _y = x + vch.x0 - var[vid][0].x0, fix + y + vch.y0 - var[vid][0].y0
-                    for l in varl[vid]:  # 排版公式线条
-                        if l.linewidth < 5:  # hack 有的文档会用粗线条当图片背景
+                    for l in varl[vid]:  # Typeset formula line
+                        if l.linewidth < 5:  # hack some documents use thick lines as image background
                             ops_vals.append({
                                 "type": OpType.LINE,
                                 "x": l.pts[0][0] + x - var[vid][0].x0,
@@ -482,22 +555,22 @@ class TranslateConverter(PDFConverterEx):
                                 "ylen": l.pts[1][1] - l.pts[0][1],
                                 "lidx": lidx
                             })
-                else:  # 插入文字缓冲区
-                    if not cstk:  # 单行开头
+                else:  # Insert into text buffer
+                    if not cstk:  # Start of single line
                         tx = x
-                        if x == x0 and ch == " ":  # 消除段落换行空格
+                        if x == x0 and ch == " ":  # Eliminate paragraph line break space
                             adv = 0
                         else:
                             cstk += ch
                     else:
                         cstk += ch
-                adv -= mod # 文字修饰符
+                adv -= mod # Text modifier
                 fcur = fcur_
                 x += adv
                 if log.isEnabledFor(logging.DEBUG):
                     lstk.append(LTLine(0.1, (_x, _y), (x, y)))
                     _x, _y = x, y
-            # 处理结尾
+            # Handle end
             if cstk:
                 ops_vals.append({
                     "type": OpType.TEXT,
@@ -520,8 +593,8 @@ class TranslateConverter(PDFConverterEx):
                 elif vals["type"] == OpType.LINE:
                     ops_list.append(gen_op_line(vals["x"], vals["dy"] + y - vals["lidx"] * size * line_height, vals["xlen"], vals["ylen"], vals["linewidth"]))
 
-        for l in lstk:  # 排版全局线条
-            if l.linewidth < 5:  # hack 有的文档会用粗线条当图片背景
+        for l in lstk:  # Typeset global line
+            if l.linewidth < 5:  # hack some documents use thick lines as image background
                 ops_list.append(gen_op_line(l.pts[0][0], l.pts[0][1], l.pts[1][0] - l.pts[0][0], l.pts[1][1] - l.pts[0][1], l.linewidth))
 
         ops = f"BT {''.join(ops_list)}ET "

@@ -192,6 +192,12 @@ def create_parser() -> argparse.ArgumentParser:
     )
 
     parse_params.add_argument(
+        "--bypass-parser",
+        action="store_true",
+        help="Bypass PDF parser and treat all detected boxes as translatable objects.",
+    )
+
+    parse_params.add_argument(
         "--mcp", action="store_true", help="Launch pdf2zh MCP server in STDIO mode"
     )
 

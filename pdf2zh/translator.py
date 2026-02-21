@@ -65,6 +65,7 @@ class BaseTranslator:
         # Cannot use self.envs = copy(self.__class__.envs)
         # because if set_envs called twice, the second call will override the first call
         self.envs = copy(self.envs)
+        self.stop_translate = False
         if ConfigManager.get_translator_by_name(self.name):
             self.envs = ConfigManager.get_translator_by_name(self.name)
         needUpdate = False
@@ -316,7 +317,7 @@ class OllamaTranslator(BaseTranslator):
             model = self.envs["OLLAMA_MODEL"]
         super().__init__(lang_in, lang_out, model, ignore_cache)
         self.options = {
-            "temperature": 0,  # 随机采样可能会打断公式标记
+            "temperature": 0,  # Random sampling may interrupt formula markers
             "num_predict": 2000,
         }
         self.client = ollama.Client(host=self.envs["OLLAMA_HOST"])
@@ -361,7 +362,7 @@ class XinferenceTranslator(BaseTranslator):
         if not model:
             model = self.envs["XINFERENCE_MODEL"]
         super().__init__(lang_in, lang_out, model, ignore_cache)
-        self.options = {"temperature": 0}  # 随机采样可能会打断公式标记
+        self.options = {"temperature": 0}  # Random sampling may interrupt formula markers
         self.client = xinference_client.RESTfulClient(self.envs["XINFERENCE_HOST"])
         self.prompttext = prompt
         self.add_cache_impact_parameters("temperature", self.options["temperature"])
@@ -421,7 +422,7 @@ class OpenAITranslator(BaseTranslator):
         if not model:
             model = self.envs["OPENAI_MODEL"]
         super().__init__(lang_in, lang_out, model, ignore_cache)
-        self.options = {"temperature": 0}  # 随机采样可能会打断公式标记
+        self.options = {"temperature": 0}  # Random sampling may interrupt formula markers
         self.client = openai.OpenAI(
             base_url=base_url or self.envs["OPENAI_BASE_URL"],
             api_key=api_key or self.envs["OPENAI_API_KEY"],
@@ -434,15 +435,21 @@ class OpenAITranslator(BaseTranslator):
         self.think_filter_regex = re.compile(think_filter_regex, flags=re.DOTALL)
 
     @retry(
-        retry=retry_if_exception_type(openai.RateLimitError),
-        stop=stop_after_attempt(100),
-        wait=wait_exponential(multiplier=1, min=1, max=15),
-        before_sleep=lambda retry_state: logger.warning(
-            f"RateLimitError, retrying in {retry_state.next_action.sleep} seconds... "
-            f"(Attempt {retry_state.attempt_number}/100)"
+        retry=(
+            retry_if_exception_type(openai.RateLimitError) | 
+            retry_if_exception_type(openai.APIConnectionError) |
+            retry_if_exception_type(openai.APITimeoutError) |
+            retry_if_exception_type(openai.InternalServerError)
         ),
+        stop=stop_after_attempt(5),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        before_sleep=lambda retry_state: logger.warning(
+            f"OpenAI error, retrying attempt {retry_state.attempt_number}/5..."
+        ),
+        reraise=True 
     )
-    def do_translate(self, text) -> str:
+    def _execute_openai_request(self, text):
+        """Internal method to handle the actual API call with retries."""
         response = self.client.chat.completions.create(
             model=self.model,
             **self.options,
@@ -451,9 +458,18 @@ class OpenAITranslator(BaseTranslator):
         if not response.choices:
             if hasattr(response, "error"):
                 raise ValueError("Error response from Service", response.error)
+        
         content = response.choices[0].message.content.strip()
-        content = self.think_filter_regex.sub("", content).strip()
-        return content
+        return self.think_filter_regex.sub("", content).strip()
+
+    def do_translate(self, text) -> str:
+        """Wrapper to catch final failures and return an empty string."""
+        try:
+            return self._execute_openai_request(text)
+        except Exception as e:
+            logger.error(f"OpenAI Translation failed after 5 retries: {e}")
+            # Return blank string instead of crashing
+            return ""
 
     def get_formular_placeholder(self, id: int):
         return "{{v" + str(id) + "}}"
@@ -1055,6 +1071,7 @@ class QwenMtTranslator(OpenAITranslator):
             "ru": "Russian",
             "es": "Spanish",
             "it": "Italian",
+            "vi": "Vietnamese",
         }
 
         return langdict[input_lang]

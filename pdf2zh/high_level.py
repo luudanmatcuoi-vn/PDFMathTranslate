@@ -85,6 +85,9 @@ def translate_patch(
     envs: Dict = None,
     prompt: Template = None,
     ignore_cache: bool = False,
+    force_font: bool = False,
+    force_font_size: int = 100,
+    bypass_parser: bool = False,
     **kwarg: Any,
 ) -> None:
     rsrcmgr = PDFResourceManager()
@@ -103,6 +106,9 @@ def translate_patch(
         envs,
         prompt,
         ignore_cache,
+        force_font,
+        force_font_size,
+        bypass_parser,
     )
 
     assert device is not None
@@ -130,9 +136,10 @@ def translate_patch(
                 pix.height, pix.width, 3
             )[:, :, ::-1]
             page_layout = model.predict(image, imgsz=int(pix.height / 32) * 32)[0]
-            # kdtree 是不可能 kdtree 的，不如直接渲染成图片，用空间换时间
+            # kdtree is impossible, better to render as image, trading space for time
             box = np.ones((pix.height, pix.width))
             h, w = box.shape
+            # Normal mode: classify boxes and filter out non-translatable ones
             vcls = ["abandon", "figure", "table", "isolate_formula", "formula_caption"]
             for i, d in enumerate(page_layout.boxes):
                 if page_layout.names[int(d.cls)] not in vcls:
@@ -155,8 +162,8 @@ def translate_patch(
                     )
                     box[y0:y1, x0:x1] = 0
             layout[page.pageno] = box
-            # 新建一个 xref 存放新指令流
-            page.page_xref = doc_zh.get_new_xref()  # hack 插入页面的新 xref
+            # Create a new xref to store new instruction stream
+            page.page_xref = doc_zh.get_new_xref()  # hack insert new xref for page
             doc_zh.update_object(page.page_xref, "<<>>")
             doc_zh.update_stream(page.page_xref, b"")
             doc_zh[page.pageno].set_contents(page.page_xref)
@@ -182,6 +189,9 @@ def translate_stream(
     prompt: Template = None,
     skip_subset_fonts: bool = False,
     ignore_cache: bool = False,
+    force_font: bool = False,
+    force_font_size: int = 100,
+    bypass_parser: bool = False,
     **kwarg: Any,
 ):
     font_list = [("tiro", None)]
@@ -203,8 +213,8 @@ def translate_stream(
             font_id[font[0]] = page.insert_font(font[0], font[1])
     xreflen = doc_zh.xref_length()
     for xref in range(1, xreflen):
-        for label in ["Resources/", ""]:  # 可能是基于 xobj 的 res
-            try:  # xref 读写可能出错
+        for label in ["Resources/", ""]:  # Possibly res based on xobj
+            try:  # xref read/write may fail
                 font_res = doc_zh.xref_get_key(xref, f"{label}Font")
                 target_key_prefix = f"{label}Font/"
                 if font_res[0] == "xref":
@@ -317,6 +327,9 @@ def translate(
     prompt: Template = None,
     skip_subset_fonts: bool = False,
     ignore_cache: bool = False,
+    force_font: bool = False,
+    force_font_size: int = 100,
+    bypass_parser: bool = False,
     **kwarg: Any,
 ):
     if not files:
@@ -400,7 +413,7 @@ def translate(
 def download_remote_fonts(lang: str):
     lang = lang.lower()
     LANG_NAME_MAP = {
-        **{la: "GoNotoKurrent-Regular.ttf" for la in noto_list},
+        **{la: "NotoSans-Regular.ttf" for la in noto_list},
         **{
             la: f"SourceHanSerif{region}-Regular.ttf"
             for region, langs in {
@@ -412,7 +425,7 @@ def download_remote_fonts(lang: str):
             for la in langs
         },
     }
-    font_name = LANG_NAME_MAP.get(lang, "GoNotoKurrent-Regular.ttf")
+    font_name = LANG_NAME_MAP.get(lang, "NotoSans-Regular.ttf")
 
     # docker
     font_path = ConfigManager.get("NOTO_FONT_PATH", Path("/app", font_name).as_posix())

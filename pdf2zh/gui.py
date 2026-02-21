@@ -88,6 +88,7 @@ lang_map = {
     "Korean": "ko",
     "Russian": "ru",
     "Spanish": "es",
+    "Vietnamese": "vi",
     "Italian": "it",
 }
 
@@ -212,6 +213,9 @@ def translate_file(
     ignore_cache,
     vfont,
     use_babeldoc,
+    force_font,
+    force_font_size,
+    bypass_parser,
     recaptcha_response,
     state,
     progress=gr.Progress(),
@@ -311,6 +315,11 @@ def translate_file(
         threads = int(threads)
     except ValueError:
         threads = 1
+    
+    try:
+        force_font_size = int(force_font_size)
+    except ValueError:
+        force_font_size = 100
 
     param = {
         "files": [str(file_raw)],
@@ -326,7 +335,10 @@ def translate_file(
         "prompt": Template(prompt) if prompt else None,
         "skip_subset_fonts": skip_subset_fonts,
         "ignore_cache": ignore_cache,
-        "vfont": vfont,  # 添加自定义公式字体正则表达式
+        "force_font": force_font,
+        "force_font_size": force_font_size,
+        "bypass_parser": bypass_parser,
+        "vfont": vfont,  # Add custom formula font regex
         "model": ModelInstance.value,
     }
 
@@ -425,7 +437,7 @@ def babeldoc_translate_file(**kwargs):
         async def yadt_translate_coro(yadt_config):
             progress_context, progress_handler = create_progress_handler(yadt_config)
 
-            # 开始翻译
+            # Start translation
             with progress_context:
                 async for event in babeldoc_translate(yadt_config):
                     progress_handler(event)
@@ -578,7 +590,7 @@ with gr.Blocks(
                 lang_to = gr.Dropdown(
                     label="Translate to",
                     choices=lang_map.keys(),
-                    value=ConfigManager.get("PDF2ZH_LANG_TO", "Simplified Chinese"),
+                    value=ConfigManager.get("PDF2ZH_LANG_TO", "Vietnamese"),
                 )
             page_range = gr.Radio(
                 choices=page_map.keys(),
@@ -603,6 +615,12 @@ with gr.Blocks(
                 ignore_cache = gr.Checkbox(
                     label="Ignore cache", interactive=True, value=False
                 )
+                force_font = gr.Checkbox(
+                    label="Force One Font", interactive=True, value=True
+                )
+                force_font_size = gr.Textbox(
+                    label="Font Size (%)", interactive=True, value="80"
+                )
                 vfont = gr.Textbox(
                     label="Custom formula font regex (vfont)",
                     interactive=True,
@@ -613,6 +631,11 @@ with gr.Blocks(
                 )
                 use_babeldoc = gr.Checkbox(
                     label="Use BabelDOC", interactive=True, value=False
+                )
+                bypass_parser = gr.Checkbox(
+                    label="Bypass Parser",
+                    interactive=True,
+                    value=True,
                 )
                 envs.append(prompt)
 
@@ -751,6 +774,9 @@ with gr.Blocks(
             ignore_cache,
             vfont,
             use_babeldoc,
+            force_font,
+            force_font_size,
+            bypass_parser,
             recaptcha_response,
             state,
             *envs,
