@@ -15,10 +15,20 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       is_main_repo: ${{ github.repository == 'Byaidu/PDFMathTranslate' }}
+      is_doc_only: ${{ steps.check-doc.outputs.is_doc_only }}
     steps:
       - run: echo "Running repository check"
+      - name: Check if commit is doc-only
+        id: check-doc
+        run: |
+          MSG=$(echo "${{ github.event.head_commit.message }}" | head -n 1)
+          if [[ "$MSG" == doc:* ]] || [[ "$MSG" == "doc("* ]]; then
+            echo "is_doc_only=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_doc_only=false" >> $GITHUB_OUTPUT
+          fi
 
   test:
     uses: ./.github/workflows/python-test.yml
     needs: check-repository
-    if: needs.check-repository.outputs.is_main_repo != 'true'
+    if: needs.check-repository.outputs.is_main_repo != 'true' && needs.check-repository.outputs.is_doc_only != 'true'

@@ -5,6 +5,7 @@ from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.routing import Mount, Route
 from pdf2zh import translate_stream
+from pdf2zh.converter_docx import convert_to_pdf, is_convertible
 from pdf2zh.doclayout import ModelInstance
 from pathlib import Path
 
@@ -21,11 +22,19 @@ def create_mcp_app() -> FastMCP:
         file: str, lang_in: str, lang_out: str, ctx: Context
     ) -> str:
         """
-        translate given pdf. Argument `file` is absolute path of input pdf,
-        `lang_in` and `lang_out` is translate from and to language, and
-        should be like google translate lang_code. `lang_in` can be `auto`
-        if you can't determine input language.
+        translate given pdf or word document. Argument `file` is absolute path
+        of input pdf/doc/docx, `lang_in` and `lang_out` is translate from and
+        to language, and should be like google translate lang_code. `lang_in`
+        can be `auto` if you can't determine input language.
         """
+
+        _converted_pdf = None
+        if is_convertible(file):
+            _converted_pdf = convert_to_pdf(file)
+            original_name = os.path.splitext(os.path.basename(file))[0]
+            file = _converted_pdf
+        else:
+            original_name = None
 
         with open(file, "rb") as f:
             file_bytes = f.read()
@@ -41,13 +50,18 @@ def create_mcp_app() -> FastMCP:
             )
         await ctx.log(level="info", message="translate complete")
         output_path = Path(os.path.dirname(file))
-        filename = os.path.splitext(os.path.basename(file))[0]
+        filename = original_name or os.path.splitext(os.path.basename(file))[0]
         doc_mono = output_path / f"{filename}-mono.pdf"
         doc_dual = output_path / f"{filename}-dual.pdf"
         with open(doc_mono, "wb") as f:
             f.write(doc_mono_bytes)
         with open(doc_dual, "wb") as f:
             f.write(doc_dual_bytes)
+        if _converted_pdf:
+            try:
+                os.unlink(_converted_pdf)
+            except OSError:
+                pass
         return f"""------------
     translate complete
     mono pdf file: {doc_mono.absolute()}

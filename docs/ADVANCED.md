@@ -56,7 +56,7 @@ We've provided a detailed table on the required [environment variables](https://
 | **Google (Default)** | `google`       | None                                                                  | N/A                                                      | None                                                                                                                                                                                                      |
 | **Bing**             | `bing`         | None                                                                  | N/A                                                      | None                                                                                                                                                                                                      |
 | **302.AI**           | `302ai`       | `X302AI_API_KEY`, `X302AI_MODEL`                                         | `[Your Key]`, `Gemma-7B` | See [302.AI](https://share.302.ai/tqTWfD)                                                                                                                                                   |
-| **OpenAI**           | `openai`       | `OPENAI_BASE_URL`, `OPENAI_API_KEY`, `OPENAI_MODEL`                   | `https://api.openai.com/v1`, `[Your Key]`, `gpt-4o-mini` | See [OpenAI](https://platform.openai.com/docs/overview)                                                                                                                                                   |
+| **OpenAI**           | `openai`       | `OPENAI_BASE_URL`, `OPENAI_API_KEY`, `OPENAI_MODEL`, `OPENAI_STOP_TOKENS`, `OPENAI_MAX_TOKENS` | `https://api.openai.com/v1`, `[Your Key]`, `gpt-4o-mini`, ` `, `-1` | See [OpenAI](https://platform.openai.com/docs/overview)                                                                                                                                                   |
 | **DeepL**            | `deepl`        | `DEEPL_AUTH_KEY`                                                      | `[Your Key]`                                             | See [DeepL](https://support.deepl.com/hc/en-us/articles/360020695820-API-Key-for-DeepL-s-API)                                                                                                             |
 | **DeepLX**           | `deeplx`       | `DEEPLX_ENDPOINT`                                                     | `https://api.deepl.com/translate`                        | See [DeepLX](https://github.com/OwO-Network/DeepLX)                                                                                                                                                       |
 | **Ollama**           | `ollama`       | `OLLAMA_HOST`, `OLLAMA_MODEL`                                         | `http://127.0.0.1:11434`, `gemma2`                       | See [Ollama](https://github.com/ollama/ollama)                                                                                                                                                            |
@@ -71,10 +71,12 @@ We've provided a detailed table on the required [environment variables](https://
 | **Dify**             | `dify`         | `DIFY_API_URL`, `DIFY_API_KEY`                                        | `[Your DIFY URL]`, `[Your Key]`                          | See [Dify](https://github.com/langgenius/dify),Three variables, lang_out, lang_in, and text, need to be defined in Dify's workflow input.                                                                 |
 | **AnythingLLM**      | `anythingllm`  | `AnythingLLM_URL`, `AnythingLLM_APIKEY`                               | `[Your AnythingLLM URL]`, `[Your Key]`                   | See [anything-llm](https://github.com/Mintplex-Labs/anything-llm)                                                                                                                                         |
 |**Argos Translate**|`argos`| | |See [argos-translate](https://github.com/argosopentech/argos-translate)|
-|**Grok**|`grok`| `GORK_API_KEY`, `GORK_MODEL` | `[Your GORK_API_KEY]`, `grok-2-1212` |See [Grok](https://docs.x.ai/docs/overview)|
+|**Grok**|`grok`| `GROK_API_KEY`, `GROK_MODEL`, `GROK_BASE_URL` (optional) | `[Your GROK_API_KEY]`, `grok-2-1212`, `https://api.x.ai/v1` |See [Grok](https://docs.x.ai/docs/overview). **Note:** When using custom proxy, ensure `GROK_BASE_URL` ends with `/v1` (e.g., `http://your-proxy:8000/v1`)|
 |**Groq**|`groq`| `GROQ_API_KEY`, `GROQ_MODEL` | `[Your GROQ_API_KEY]`, `llama-3-3-70b-versatile` |See [Groq](https://console.groq.com/docs/models)|
 |**DeepSeek**|`deepseek`| `DEEPSEEK_API_KEY`, `DEEPSEEK_MODEL` | `[Your DEEPSEEK_API_KEY]`, `deepseek-chat` |See [DeepSeek](https://www.deepseek.com/)|
+|**MiniMax**|`minimax`| `MINIMAX_API_KEY`, `MINIMAX_MODEL` | `[Your MINIMAX_API_KEY]`, `MiniMax-M2.7` |See [MiniMax](https://platform.minimaxi.com/)|
 |**OpenAI-Liked**|`openailiked`| `OPENAILIKED_BASE_URL`, `OPENAILIKED_API_KEY`, `OPENAILIKED_MODEL` | `url`, `[Your Key]`, `model name` | None |
+|**OpenAI-Liked**|`openailiked`| `OPENAILIKED_BASE_URL`, `OPENAILIKED_API_KEY`, `OPENAILIKED_MODEL`, `OPENAILIKED_STOP_TOKENS`, `OPENAILIKED_MAX_TOKENS` | `url`, `[Your Key]`, `model name`, ` `, `-1` | None |
 |**Ali Qwen Translation**|`qwen-mt`| `ALI_MODEL`, `ALI_API_KEY`, `ALI_DOMAINS` | `qwen-mt-turbo`, `[Your Key]`, `scientific paper` | Tranditional Chinese are not yet supported, it will be translated into Simplified Chinese. More see [Qwen MT](https://bailian.console.aliyun.com/?spm=5176.28197581.0.0.72e329a4HRxe99#/model-market/detail/qwen-mt-turbo) |
 
 For large language models that are compatible with the OpenAI API but not listed in the table above, you can set environment variables using the same method outlined for OpenAI in the table.
@@ -219,6 +221,8 @@ pdf2zh -i --config config.json
 
 example config.json
 
+> **⚠️ Important:** When using OpenAI-compatible APIs or custom proxies (like Grok, OpenAI-liked, etc.), ensure the `BASE_URL` ends with `/v1` (e.g., `https://api.openai.com/v1` or `http://your-proxy:8000/v1`). Missing the `/v1` suffix will result in 404 errors.
+
 ```json
 {
     "USE_MODELSCOPE": "0",
@@ -238,6 +242,14 @@ example config.json
             "envs": {
                 "OLLAMA_HOST": "http://127.0.0.1:11434",
                 "OLLAMA_MODEL": "gemma2"
+            }
+        },
+        {
+            "name": "grok",
+            "envs": {
+                "GROK_BASE_URL": "https://api.x.ai/v1",
+                "GROK_API_KEY": "your-api-key",
+                "GROK_MODEL": "grok-2-1212"
             }
         }
     ]
@@ -285,6 +297,8 @@ configuration file. Among them:
 
 A usable configuration is as follows:
 
+> **⚠️ Important:** The `BASE_URL` must end with `/v1` for OpenAI-compatible APIs.
+
 ```json
 {
     "USE_MODELSCOPE": "0",
@@ -292,8 +306,9 @@ A usable configuration is as follows:
         {
             "name": "grok",
             "envs": {
-                "GORK_API_KEY": null,
-                "GORK_MODEL": "grok-2-1212"
+                "GROK_BASE_URL": "https://api.x.ai/v1",
+                "GROK_API_KEY": "your-api-key",
+                "GROK_MODEL": "grok-2-1212"
             }
         },
         {

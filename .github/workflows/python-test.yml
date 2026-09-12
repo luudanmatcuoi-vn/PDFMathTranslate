@@ -1,27 +1,30 @@
 name: Test and Build Python Package
 
 on:
-  push:
-    branches:
-      - '**'
-      - '!main'
-      - '!master'
   pull_request:
   workflow_call:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-and-test:
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    if: >-
+      !startsWith(github.event.pull_request.title, 'doc:') &&
+      !startsWith(github.event.pull_request.title, 'doc(')
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12"]
+        python-version: ["3.11", "3.12"]
         runner:
           - ubuntu-latest
           - ubuntu-24.04-arm
     steps:
       - name: checkout babeldoc metadata
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: funstory-ai/BabelDOC
           path: babeldoctemp1234567
@@ -29,17 +32,37 @@ jobs:
           sparse-checkout: babeldoc/assets/embedding_assets_metadata.py
       - name: Cached Assets
         id: cache-assets
-        uses: actions/cache@v4.2.2
+        uses: actions/cache@v5
         with:
           path: ~/.cache/babeldoc
           key: test-1-babeldoc-assets-${{ hashFiles('babeldoctemp1234567/babeldoc/assets/embedding_assets_metadata.py') }}
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Setup uv with Python ${{ matrix.python-version }}
-        uses: astral-sh/setup-uv@f94ec6bedd8674c4426838e6b50417d36b6ab231 # v5.3.1
+        uses: astral-sh/setup-uv@85856786d1ce8acfbcc2f13a5f3fbd6b938f9f41 # v7.1.2
         with:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
           cache-dependency-glob: "pyproject.toml"
+      - name: Cache apt packages
+        if: runner.os == 'Linux'
+        id: cache-apt
+        uses: actions/cache@v5
+        with:
+          path: ~/apt-cache
+          key: apt-libreoffice-${{ matrix.runner }}
+
+      - name: Install system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          if [ -d ~/apt-cache ] && [ "$(ls -A ~/apt-cache 2>/dev/null)" ]; then
+            echo "Restoring cached apt packages..."
+            sudo cp ~/apt-cache/*.deb /var/cache/apt/archives/ 2>/dev/null || true
+          fi
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libreoffice-core libreoffice-writer
+          mkdir -p ~/apt-cache
+          cp /var/cache/apt/archives/*.deb ~/apt-cache/ 2>/dev/null || true
+
       - name: Install dependencies
         run: |
           uv sync
@@ -65,7 +88,8 @@ jobs:
         run: uv build
 
       - name: Upload test results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: test-results-${{ matrix.python-version }}-${{ matrix.runner }}
           path: ./test/file/
+          retention-days: 7

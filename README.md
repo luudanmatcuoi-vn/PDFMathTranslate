@@ -44,7 +44,7 @@ English | [简体中文](docs/README_zh-CN.md) | [繁體中文](docs/README_zh-T
     <img src="https://img.shields.io/github/license/Byaidu/PDFMathTranslate"></a>
 </p>
 
-<a href="https://trendshift.io/repositories/12424" target="_blank"><img src="https://trendshift.io/api/badge/repositories/12424" alt="Byaidu%2FPDFMathTranslate | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
+<a href="https://trendshift.io/repositories/19816" target="_blank"><img src="https://trendshift.io/api/badge/repositories/19816" alt="PDFMathTranslate%2FPDFMathTranslate | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
 
 </div>
 
@@ -62,6 +62,12 @@ Scientific PDF document translation preserving layouts.
 
 <h2 id="updates">2. Recent Updates</h2>
 
+- [September 8, 2026] Experimental OCR support, with paragraph regrouping and adaptive typesetting. (by [@reycn](https://github.com/reycn))
+- [March 23, 2026] Experimental support for v2.0 translation kernel using isolated environment (`--mode precise`). (by [@reycn](https://github.com/reycn))
+- [March 22, 2026] Supporting MiniMax (PR by [@octo-patch](https://github.com/octo-patch))
+- [March 22, 2026] Fixing OpenAI-related issues (PR by [@samqin123](https://github.com/samqin123))
+- [March 22, 2026] Fixing HTTP-related issues (PR by [@soukouki](https://github.com/soukouki))
+- [March 22, 2026] Faster model loading on mac and OONX platforms, GUI starting-up, version printing, and continuous integration.(by [@reycn](https://github.com/reycn))
 - [May 9, 2025] pdf2zh 2.0 Preview Version [#586](https://github.com/Byaidu/PDFMathTranslate/issues/586): The Windows ZIP file and Docker image are now available.
 
   > [!NOTE]
@@ -69,10 +75,6 @@ Scientific PDF document translation preserving layouts.
   > 2.0 Moved to a new repository under the organization: [PDFMathTranslate/PDFMathTranslate-next](https://github.com/PDFMathTranslate/PDFMathTranslate-next)
   > 
   > Version 2.0 official release has been published.
-
-- [Mar. 3, 2025] Experimental support for the new backend [BabelDOC](https://github.com/funstory-ai/BabelDOC) WebUI added as an experimental option (by [@awwaawwa](https://github.com/awwaawwa))
-- [Feb. 22 2025] Better release CI and well-packaged windows-amd64 exe (by [@awwaawwa](https://github.com/awwaawwa))
-
 
 <h2 id="use-section">3. Use 🌟</h2>
 <h3 id="demo">3.1 Online Service 🌟</h3>
@@ -93,7 +95,7 @@ For different use cases, we provide distinct methods to use our program:
 <details open>
   <summary>3.2.1 Python: Install using uv</summary>
 
-1. Python installed (3.10 <= version <= 3.12)
+1. Python installed (3.11 <= version <= 3.12)
 
 2. Install our package:
 
@@ -112,7 +114,7 @@ For different use cases, we provide distinct methods to use our program:
 <details>
   <summary>3.2.2 Python: Install using pip</summary>
 
-1. Python installed (3.10 <= version <= 3.12)
+1. Python installed (3.11 <= version <= 3.12)
 2. Install our package:
 
    ```bash
@@ -129,7 +131,7 @@ For different use cases, we provide distinct methods to use our program:
 <details>
   <summary>3.3.3 Python: Graphic user interface</summary>
 
-1. Python installed (3.10 <= version <= 3.12)
+1. Python installed (3.11 <= version <= 3.12)
 
 2. Install our package:
 
@@ -243,6 +245,29 @@ For docker deployment on cloud service:
 
 <h2 id="usage">4. Technical Details</h2>
 
+### Experimental automatic OCR (fast mode)
+
+Fast mode automatically runs local OCR on selected image-only pages before
+translation. Native text, existing OCR layers, and blank pages are skipped;
+the original pages in dual output remain unchanged. Install with
+`pip install 'pdf2zh[ocr]'` (or `pip install -e '.[ocr]'` from this checkout).
+The first scanned page downloads the requested language data from Tesseract's
+`tessdata_fast` 4.1.0 release into `~/.cache/pdf2zh/tessdata/4.1.0`; subsequent
+runs reuse it offline. Native-text PDFs do not trigger downloads.
+OCR uses the input language; `PDF2ZH_OCR_LANGUAGE=eng+deu` overrides it with
+Tesseract language codes. Set `TESSDATA_PREFIX` to use your own data without
+automatic downloads.
+
+PyMuPDF supplies the OCR engine; the optional extra adds Pooch for cached downloads.
+No separate Tesseract executable is required.
+OCR words are regrouped into paragraphs within detected layout regions before
+translation, with wrapped lines and soft hyphens joined. Translated paragraphs
+start at the median source font size and shrink to fit their original boxes;
+detected figures, tables, and standalone formulas remain untouched.
+The initial implementation targets white-background scans: partial scans on
+pages that already contain text are skipped, and handwritten text or inline
+equations may be recognized incorrectly. Precise mode is unchanged.
+
 ### 4.1 Advanced options
 
 Execute the translation command in the command line to generate the translated document `example-mono.pdf` and the bilingual document `example-dual.pdf` in the current working directory. Use Google as the default translation service. More support translation services can find [HERE](https://github.com/Byaidu/PDFMathTranslate/blob/main/docs/ADVANCED.md#services).
@@ -274,6 +299,7 @@ In the following table, we list all advanced options for reference:
 | `--dir`               | [batch translate]                                                                                             | `pdf2zh --dir /path/to/translate/`             |
 | `--config`            | [configuration file](https://github.com/Byaidu/PDFMathTranslate/blob/main/docs/ADVANCED.md#cofig)             | `pdf2zh --config /path/to/config/config.json`  |
 | `--serverport`        | [custom gradio server port]                                                                                   | `pdf2zh --serverport 7860`                     |
+| `--mode`              | Translation mode: `fast` (default, v1) or `precise` (v2, experimental, requires pdf2zh_next submodule)         | `pdf2zh --mode precise example.pdf`            |
 | `--babeldoc`          | Use Experimental backend [BabelDOC](https://funstory-ai.github.io/BabelDOC/) to translate                     | `pdf2zh --babeldoc` -s openai example.pdf      |
 | `--mcp`               | Enable MCP STDIO mode                                                                                         | `pdf2zh --mcp`                                 |
 | `--sse`               | Enable MCP SSE mode                                                                                           | `pdf2zh --mcp --sse`                           |
@@ -354,11 +380,9 @@ For details on how to contribute, please consult the [Contribution Guide](https:
 
 
 <h3 id="star_hist">5.4 Star History</h3>
-
-<a href="https://star-history.com/#Byaidu/PDFMathTranslate&Date">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Byaidu/PDFMathTranslate&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=Byaidu/PDFMathTranslate&type=Date" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=Byaidu/PDFMathTranslate&type=Date"/>
- </picture>
-</a>
+<!-- star-history:start -->
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/star-history/star-history-dark.svg">
+  <img alt="Star history" src="assets/star-history/star-history-light.svg">
+</picture>
+<!-- star-history:end -->

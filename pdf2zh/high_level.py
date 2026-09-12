@@ -15,6 +15,8 @@ from typing import Any, BinaryIO, List, Optional, Dict
 import numpy as np
 import requests
 import tqdm
+
+from pdf2zh.converter_docx import convert_to_pdf, is_convertible
 from pdfminer.pdfdocument import PDFDocument
 from pdfminer.pdfexceptions import PDFValueError
 from pdfminer.pdfinterp import PDFResourceManager
@@ -136,7 +138,19 @@ def translate_patch(
                 pix.height, pix.width, 3
             )[:, :, ::-1]
             page_layout = model.predict(image, imgsz=int(pix.height / 32) * 32)[0]
-            # kdtree is impossible, better to render as image, trading space for time
+            if ocr_pages and pageno in ocr_pages:
+                from pdf2zh.ocr import translate_ocr_page
+
+                translate_ocr_page(
+                    doc_zh[pageno],
+                    page_layout,
+                    device.translator,
+                    noto,
+                    thread,
+                    cancellation_event,
+                )
+                continue
+            # kdtree 是不可能 kdtree 的，不如直接渲染成图片，用空间换时间
             box = np.ones((pix.height, pix.width))
             h, w = box.shape
             # Normal mode: classify boxes and filter out non-translatable ones
@@ -173,6 +187,97 @@ def translate_patch(
     return obj_patch
 
 
+def _ocr_tessdata(language):
+    """Use explicit local data, or download requested languages once on demand."""
+    if not re.fullmatch(r"[A-Za-z0-9_]+(?:\+[A-Za-z0-9_]+)*", language):
+        raise ValueError("Invalid OCR language; use Tesseract codes such as eng+deu")
+    if tessdata := os.environ.get("TESSDATA_PREFIX"):
+        return tessdata
+    try:
+        import pooch
+    except ImportError as exc:
+        raise RuntimeError(
+            "Automatic OCR downloads require pip install 'pdf2zh[ocr]'. "
+            "Alternatively, set TESSDATA_PREFIX to existing language data."
+        ) from exc
+    cache = Path.home() / ".cache/pdf2zh/tessdata/4.1.0"
+    for code in dict.fromkeys(language.split("+")):
+        filename = f"{code}.traineddata"
+        try:
+            pooch.retrieve(
+                url=f"https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/4.1.0/{filename}",
+                known_hash=None,
+                fname=filename,
+                path=cache,
+                downloader=pooch.HTTPDownloader(timeout=60),
+            )
+        except (requests.RequestException, OSError) as exc:
+            raise RuntimeError(
+                f"Could not download OCR data for '{code}'. Check the language code "
+                "and network connection, or set TESSDATA_PREFIX to local data."
+            ) from exc
+    return str(cache)
+
+
+def _ocr_pages(doc, pages, lang_in, cancellation_event):
+    """Add a text layer only to selected image-only pages in the working copy."""
+    language = os.environ.get("PDF2ZH_OCR_LANGUAGE") or {
+        "en": "eng",
+        "zh": "chi_sim",
+        "zh-cn": "chi_sim",
+        "zh-tw": "chi_tra",
+        "ja": "jpn",
+        "ko": "kor",
+        "de": "deu",
+        "fr": "fra",
+        "es": "spa",
+        "it": "ita",
+        "pt": "por",
+        "ru": "rus",
+    }.get(lang_in.lower(), lang_in or "eng")
+    ocr_pages = set()
+    tessdata = None
+    for pageno in range(len(doc)):
+        if cancellation_event and cancellation_event.is_set():
+            raise CancelledError("task cancelled")
+        if pages and pageno not in pages:
+            continue
+        page = doc[pageno]
+        # ponytail: image-only pages; partial scans need region-level OCR later.
+        if page.get_text().strip() or not page.get_image_info():
+            continue
+        logger.info("OCR page %d (%s)", pageno + 1, language)
+        if tessdata is None:
+            tessdata = _ocr_tessdata(language)
+        try:
+            data = page.get_pixmap(dpi=300, alpha=False, annots=False).pdfocr_tobytes(
+                language=language,
+                tessdata=tessdata,
+            )
+        except RuntimeError as exc:
+            raise RuntimeError(
+                f"OCR failed on page {pageno + 1} using '{language}' data in {tessdata}. "
+                "Check the language data and any TESSDATA_PREFIX override. "
+                "Use PDF2ZH_OCR_LANGUAGE to override the OCR language."
+            ) from exc
+        with Document(stream=data) as recognized:
+            if not recognized[0].get_text().strip():
+                logger.warning("OCR found no text on page %d", pageno + 1)
+                continue
+            contents = doc.get_new_xref()
+            doc.update_object(contents, "<<>>")
+            doc.update_stream(contents, b"")
+            page.set_contents(contents)
+            page.show_pdf_page(
+                page.rect * page.derotation_matrix,
+                recognized,
+                0,
+                rotate=page.rotation,
+            )
+        ocr_pages.add(pageno)
+    return ocr_pages
+
+
 def translate_stream(
     stream: bytes,
     pages: Optional[list[int]] = None,
@@ -205,6 +310,7 @@ def translate_stream(
     stream = io.BytesIO()
     doc_en.save(stream)
     doc_zh = Document(stream=stream)
+    ocr_pages = _ocr_pages(doc_zh, pages, lang_in, cancellation_event)
     page_count = doc_zh.page_count
     # font_list = [("GoNotoKurrent-Regular.ttf", font_path), ("tiro", None)]
     font_id = {}
@@ -365,7 +471,15 @@ def translate(
                 raise PDFValueError(
                     f"Errors occur in downloading the PDF file. Please check the link(s).\nError:\n{e}"
                 )
-        filename = os.path.splitext(os.path.basename(file))[0]
+
+        # Convert doc/docx to PDF if needed
+        _converted_pdf = None
+        if is_convertible(file):
+            _converted_pdf = convert_to_pdf(file)
+            filename = os.path.splitext(os.path.basename(file))[0]
+            file = _converted_pdf
+        else:
+            filename = os.path.splitext(os.path.basename(file))[0]
 
         # If the commandline has specified converting to PDF/A format
         # --compatible / -cp
@@ -390,7 +504,7 @@ def translate(
             ):
                 file_path.unlink(missing_ok=True)
                 logger.debug(f"Cleaned temp file: {file_path}")
-        except Exception as e:
+        except Exception:
             logger.warning(f"Failed to clean temp file {file_path}", exc_info=True)
 
         s_mono, s_dual = translate_stream(

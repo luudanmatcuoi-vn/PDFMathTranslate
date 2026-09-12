@@ -1,11 +1,11 @@
 [project]
 name = "pdf2zh"
-version = "1.9.11"
+version = "1.9.12"
 description = "Latex PDF Translator"
 authors = [{ name = "Byaidu", email = "byaidux@gmail.com" }]
 license = "AGPL-3.0"
 readme = "README.md"
-requires-python = ">=3.10,<3.13"
+requires-python = ">=3.11,<3.13"
 classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",
@@ -28,7 +28,7 @@ dependencies = [
     "onnx",
     "onnxruntime",
     "opencv-python-headless",
-    "tencentcloud-sdk-python-tmt",
+    "tencentcloud-sdk-python-tmt==3.1.70",  # newer releases remove TextTranslate
     "pdfminer-six==20250416",
     "gradio_pdf>=0.0.21",
     "pikepdf",
@@ -39,6 +39,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+ocr = [
+    "pooch>=1.8,<2",  # first-use downloads for PyMuPDF's built-in OCR
+]
 backend = [
     "flask",
     "celery",
@@ -50,6 +53,13 @@ argostranslate = [
 mcp = [
     "mcp>=1.6.0",
 ]
+cuda = [
+    "onnxruntime-gpu",
+]
+dml = [
+    "onnxruntime-directml",
+]
+precise = []  # marker — run `pdf2zh-setup-precise` after install to provision the isolated venv
 
 [dependency-groups]
 dev = [
@@ -70,6 +80,7 @@ build-backend = "hatchling.build"
 
 [project.scripts]
 pdf2zh = "pdf2zh.pdf2zh:main"
+pdf2zh-setup-precise = "pdf2zh.kernel.precise:setup_precise_cli"
 
 [tool.flake8]
 ignore = ["E203", "E261", "E501", "W503", "E741"]
@@ -78,7 +89,7 @@ max-line-length = 88
 
 
 [bumpver]
-current_version = "1.9.11"
+current_version = "1.9.12"
 version_pattern = "MAJOR.MINOR.PATCH[.PYTAGNUM]"
 
 [bumpver.file_patterns]

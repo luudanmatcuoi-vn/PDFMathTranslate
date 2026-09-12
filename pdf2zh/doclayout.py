@@ -1,5 +1,6 @@
 import abc
-import os.path
+import logging
+import os
 
 import cv2
 import numpy as np
@@ -17,9 +18,25 @@ except ImportError as e:
         ) from e
     raise
 
-from huggingface_hub import hf_hub_download
+logger = logging.getLogger(__name__)
 
-from pdf2zh.config import ConfigManager
+_BACKEND_PROVIDERS = {
+    "cpu": ["CPUExecutionProvider"],
+    "cuda": ["CUDAExecutionProvider", "CPUExecutionProvider"],
+    "dml": ["DmlExecutionProvider", "CPUExecutionProvider"],
+}
+
+_preferred_backend: str | None = None
+
+
+def set_backend(name: str) -> None:
+    """Set the ONNX Runtime execution provider backend.
+
+    Args:
+        name: One of 'auto', 'cpu', 'cuda', 'dml'.
+    """
+    global _preferred_backend
+    _preferred_backend = None if name == "auto" else name
 
 
 class DocLayoutModel(abc.ABC):
@@ -71,14 +88,41 @@ class YoloBox:
 
 class OnnxModel(DocLayoutModel):
     def __init__(self, model_path: str):
+        model_path = str(model_path)
         self.model_path = model_path
 
-        model = onnx.load(model_path)
+        # Extract metadata without full model deserialization
+        model = onnx.load(model_path, load_external_data=False)
         metadata = {d.key: d.value for d in model.metadata_props}
         self._stride = ast.literal_eval(metadata["stride"])
         self._names = ast.literal_eval(metadata["names"])
+        del model  # free memory before creating session
 
-        self.model = onnxruntime.InferenceSession(model.SerializeToString())
+        sess_options = onnxruntime.SessionOptions()
+        sess_options.graph_optimization_level = (
+            onnxruntime.GraphOptimizationLevel.ORT_ENABLE_ALL
+        )
+
+        if _preferred_backend and _preferred_backend in _BACKEND_PROVIDERS:
+            providers = _BACKEND_PROVIDERS[_preferred_backend]
+        else:
+            providers = onnxruntime.get_available_providers()
+
+        # Providers like CoreML generate compiled nodes that cannot be
+        # serialized, so only cache the optimized graph for CPU-only.
+        compiled_providers = {"CoreMLExecutionProvider", "TensorrtExecutionProvider"}
+        can_cache = not compiled_providers.intersection(providers)
+        if can_cache:
+            optimized_path = model_path + ".optimized"
+            if os.path.exists(optimized_path):
+                model_path = optimized_path
+            else:
+                sess_options.optimized_model_filepath = optimized_path
+
+        self.model = onnxruntime.InferenceSession(
+            model_path, sess_options, providers=providers
+        )
+        logger.info("ONNX Runtime providers: %s", self.model.get_providers())
 
     @staticmethod
     def from_pretrained():

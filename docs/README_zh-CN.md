@@ -45,11 +45,18 @@
 
 <h2 id="updates">更新</h2>
 
+
+- [2026年3月23日] 实验性支持 v2.0 翻译内核，使用隔离环境运行（`--mode precise`）。（由[@reycn](https://github.com/reycn) 提交）
+
+- [2026年3月22日] 支持 MiniMax（由[@octo-patch](https://github.com/octo-patch) 提交的PR）
+
+- [2026年3月22日] 修复与 OpenAI 相关的问题（由[@samqin123](https://github.com/samqin123) 提交的PR）
+
+- [2026年3月22日] 修复与 HTTP 相关的问题（由[@soukouki](https://github.com/soukouki) 提交的PR）
+
+- [2026年3月22日] 在 mac 和 OONX 平台上加快模型加载速度，GUI 启动，版本打印和持续集成。（由[@reycn](https://github.com/reycn) 提交）
 - [2025 年 2 月 22 日] 更好的发布 CI 和精心打包的 windows-amd64 exe (由 [@awwaawwa](https://github.com/awwaawwa) 提供)
 - [2024 年 12 月 24 日] 翻译器现在支持在 [Xinference](https://github.com/xorbitsai/inference) 上使用本地模型 _(由 [@imClumsyPanda](https://github.com/imClumsyPanda) 提供)_
-- [2024 年 12 月 19 日] 现在支持非 PDF/A 文档，使用 `-cp` _(由 [@reycn](https://github.com/reycn) 提供)_
-- [2024 年 12 月 13 日] 额外支持后端 _(由 [@YadominJinta](https://github.com/YadominJinta) 提供)_
-- [2024 年 12 月 10 日] 翻译器现在支持 Azure 上的 OpenAI 模型 _(由 [@yidasanqian](https://github.com/yidasanqian) 提供)_
 
 <h2 id="preview">预览</h2>
 <div align="center">
@@ -77,7 +84,7 @@
 <details open>
   <summary>1. UV 安装</summary>
 
-1. 安装 Python (3.10 <= 版本 <= 3.12)
+1. 安装 Python (3.11 <= 版本 <= 3.12)
 2. 安装我们的包：
 
    ```bash
@@ -104,7 +111,7 @@
 
 <details>
   <summary id="gui">3. 图形用户界面</summary>
-1. 安装 Python (3.10 <= 版本 <= 3.12)
+1. 安装 Python (3.11 <= 版本 <= 3.12)
 2. 安装我们的包：
 
 ```bash
@@ -172,7 +179,7 @@ pip install pdf2zh
 <details>
   <summary>6. 命令行</summary>
 
-1. 已安装 Python（3.10 <= 版本 <= 3.12）
+1. 已安装 Python（3.11 <= 版本 <= 3.12）
 2. 安装我们的包：
 
    ```bash
@@ -243,6 +250,7 @@ $env:HF_ENDPOINT = https://hf-mirror.com
 | `--dir`      | [批量翻译]                                                                                                   | `pdf2zh --dir /path/to/translate/`             |
 | `--config`   | [配置文件](https://github.com/Byaidu/PDFMathTranslate/blob/main/docs/ADVANCED.md#cofig)                       | `pdf2zh --config /path/to/config/config.json`  |
 | `--serverport` | [自定义 gradio 服务器端口]                                                                                 | `pdf2zh --serverport 7860`                     |
+| `--mode`   | 翻译模式：`fast`（默认，v1）或 `precise`（v2，实验性，需要 pdf2zh_next 子模块）                                | `pdf2zh --mode precise example.pdf`            |
 | `--babeldoc`| 使用实验性后端 [BabelDOC](https://funstory-ai.github.io/BabelDOC/) 翻译 |`pdf2zh --babeldoc` -s openai example.pdf|
 
 有关详细说明，请参阅我们的文档 [高级用法](./ADVANCED.md)，以获取每个选项的完整列表。
